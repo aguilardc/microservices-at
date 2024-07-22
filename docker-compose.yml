@@ -1,0 +1,136 @@
+version: "3.8"
+
+services:
+  mongo-product-ms:
+    image: mongo:7
+    container_name: mongo-product-ms
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-product-volume:/data/db
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=root
+      - MONGO_INITDB_ROOT_PASSWORD=12345
+    networks:
+      - net-ms
+
+  mongo-order-ms:
+    image: mongo:7
+    container_name: mongo-order-ms
+    ports:
+      - "27018:27017"
+    volumes:
+      - mongo-order-volume:/data/db
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=root
+      - MONGO_INITDB_ROOT_PASSWORD=12345
+    networks:
+      - net-ms
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: rabbitmq-diagnostic -q ping
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 2s
+    networks:
+      - net-ms
+
+  product-ms:
+    build:
+      dockerfile: product-ms/Dockerfile
+      context: .
+    image: image-product-ms
+    container_name: product-ms
+    environment:
+      - PORT=8000
+      - MONGO_HOST=mongo-product-ms
+      - MONGO_PORT=27017
+      - MONGO_USERNAME=root
+      - MONGO_PASSWORD=12345
+      - RABBITMQ_HOST=rabbitmq:5672
+      - QUEUE_ORDER_CREATED_EVENT=ORDER_CREATED_EVENT
+      - EXCHANGE_ORDER_COMPLETED_EVENT=EXCHANGE_ORDER_COMPLETED_EVENT
+      - EXCHANGE_ERROR_EVENT=EXCHANGE_ERROR_EVENT
+    depends_on:
+      - mongo-product-ms
+      - rabbitmq
+    restart: always
+    networks:
+      - net-ms
+
+  order-ms:
+    build:
+      dockerfile: order-ms/Dockerfile
+      context: .
+    image: image-order-ms
+    container_name: order-ms
+    environment:
+      - PORT=8000
+      - MONGO_HOST=mongo-order-ms
+      - MONGO_PORT=27017
+      - MONGO_USERNAME=root
+      - MONGO_PASSWORD=12345
+      - RABBITMQ_HOST=rabbitmq:5672
+      - QUEUE_ORDER_CREATED_EVENT=ORDER_CREATED_EVENT
+      - QUEUE_ORDER_PAID_EVENT=QUEUE_ORDER_PAID_EVENT
+      - QUEUE_ORDER_SUCCESS_EVENT=QUEUE_ORDER_SUCCESS_EVENT
+      - EXCHANGE_ORDER_COMPLETED_EVENT=EXCHANGE_ORDER_COMPLETED_EVENT
+      - EXCHANGE_ERROR_EVENT=EXCHANGE_ERROR_EVENT
+    depends_on:
+      - mongo-order-ms
+      - rabbitmq
+    restart: always
+    networks:
+      - net-ms
+
+  payment-ms:
+    build:
+      dockerfile: payment-ms/Dockerfile
+      context: .
+    image: image-payment-ms
+    container_name: payment-ms
+    environment:
+      - PORT=8000
+      - RABBITMQ_HOST=rabbitmq:5672
+      - QUEUE_ORDER_SUCCESS_EVENT=QUEUE_ORDER_SUCCESS_EVENT
+      - QUEUE_ORDER_PAID_EVENT=ORDER_PAID_EVENT
+      - EXCHANGE_ORDER_COMPLETED_EVENT=EXCHANGE_ORDER_COMPLETED_EVENT
+      - EXCHANGE_ERROR_EVENT=EXCHANGE_ERROR_EVENT
+    depends_on:
+      - rabbitmq
+    restart: always
+    networks:
+      - net-ms
+
+  gateway:
+    build:
+      dockerfile: gateway/Dockerfile
+      context: .
+    image: image-gateway
+    container_name: gateway
+    ports:
+      - "5000:8000"
+    environment:
+      - PORT=8000
+      - PATH_PRODUCT=http://product-ms:8000/products
+      - PATH_ORDER=http://order-ms:8000/orders
+      - PATH_PAYMENT=http://payment-ms:8000/payment
+    depends_on:
+      - rabbitmq
+    restart: always
+    networks:
+      - net-ms
+
+volumes:
+  mongo-product-volume:
+  mongo-order-volume:
+
+networks:
+  net-ms:
